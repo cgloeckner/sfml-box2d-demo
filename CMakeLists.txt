@@ -1,0 +1,14 @@
+cmake_minimum_required (VERSION 3.0)
+project (sfml-box2d-demo)
+
+set(CMAKE_CXX_STANDARD 14)
+
+include_directories(extlibs/sfml/include)
+include_directories(extlibs/box2d/Box2D)
+
+# build extlibs
+add_subdirectory(extlibs)
+
+add_executable(demo src/main.cpp)
+target_link_libraries(demo sfml-system sfml-graphics sfml-window sfml-audio box2d)
+
