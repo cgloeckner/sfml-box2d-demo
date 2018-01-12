@@ -1,0 +1,6 @@
+[submodule "extlibs/box2d"]
+	path = extlibs/box2d
+	url = https://github.com/erincatto/Box2D
+[submodule "extlibs/sfml"]
+	path = extlibs/sfml
+	url = https://github.com/sfml/sfml
