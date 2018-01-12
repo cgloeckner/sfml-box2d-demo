@@ -82,6 +82,8 @@ int main() {
     b2Vec2 gravity{0.f, 0.f};
     b2World world{gravity};
     auto actor = createBody(world, {400.f, 300.f}, 10.f);
+    unsigned int id = 42;
+    actor->GetFixtureList()->SetUserData(&id); // store ID to identify as actor
 
     sf::RenderWindow window{sf::VideoMode{800u, 600u}, "Box2D + SFML Demo"};
     
@@ -111,6 +113,18 @@ int main() {
         
         // simulate world
         world.Step(1/60.f, 8, 3);
+        
+        // query all collisions
+        for (b2Contact* c = world.GetContactList(); c; c = c->GetNext()) {
+            auto fixa = c->GetFixtureA();
+            auto fixb = c->GetFixtureB();
+            
+            // todo: find a way to detect each collision ONCE
+            // --> the collision must be solved so it isn't triggered again
+            if (fixa->GetUserData() == &id || fixb->GetUserData() == &id) {
+                std::cout << "Ooops\n";
+            }
+        }
         
         // render scene
         window.clear(sf::Color::Black);
