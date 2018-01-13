@@ -9,6 +9,7 @@ include_directories(extlibs/box2d/Box2D)
 # build extlibs
 add_subdirectory(extlibs)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0")
 add_executable(demo src/main.cpp)
 target_link_libraries(demo sfml-system sfml-graphics sfml-window sfml-audio box2d)
 

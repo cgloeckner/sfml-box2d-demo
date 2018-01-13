@@ -11,19 +11,26 @@
 struct GameObject {
 	GameObject()
 		: face_dir{}
-		, body{nullptr} {
+		, body{nullptr}
+		, is_projectile{false}
+		, drop{false}
+		, respawn{false} {
 	}
 	
 	sf::Vector2f face_dir;
 	b2Body* body;
+	bool is_projectile;
+	float radius;
+	sf::Vector2f size;
+	
+	bool drop, respawn;
 };
-
-float const tile_size{20.f};
 
 // physics --------------------------------------------------------------------
 
-b2Body* createBody(b2World& world, sf::Vector2f const & pos, bool dynamic, b2Shape* shape) {
+b2Body* createBody(b2World& world, sf::Vector2f const & pos, bool dynamic, b2Shape* shape, bool bullet) {
 	b2BodyDef bodydef;
+	bodydef.bullet = bullet;
 	bodydef.position = b2Vec2(pos.x, pos.y);
 	bodydef.type = dynamic ? b2_dynamicBody : b2_staticBody;
 	
@@ -36,19 +43,18 @@ b2Body* createBody(b2World& world, sf::Vector2f const & pos, bool dynamic, b2Sha
 	return body;
 }
 
-b2Body* createCirc(b2World& world, sf::Vector2f const & pos, bool dynamic, float radius) {
+b2Body* createCirc(b2World& world, sf::Vector2f const & pos, bool dynamic, float radius, bool bullet) {
 	b2CircleShape shape;
 	shape.m_radius = radius;
 	
-	return createBody(world, pos, dynamic, &shape);
+	return createBody(world, pos, dynamic, &shape, bullet);
 }
 
-
-b2Body* createRect(b2World& world, sf::Vector2f const & pos, bool dynamic, sf::Vector2f const & size) {
+b2Body* createRect(b2World& world, sf::Vector2f const & pos, bool dynamic, sf::Vector2f const & size, bool bullet) {
 	b2PolygonShape shape;
 	shape.SetAsBox(size.x/2.f, size.y/2.f);
 
-	return createBody(world, pos, dynamic, &shape);
+	return createBody(world, pos, dynamic, &shape, bullet);
 }
 
 float getAngle(b2Vec2 a, b2Vec2 b) {
@@ -79,6 +85,28 @@ void CollisionHandler::stopBody(b2Body* body) {
 }
 
 void CollisionHandler::BeginContact(b2Contact* contact) {
+	auto a = contact->GetFixtureA()->GetBody()->GetUserData();
+	auto b = contact->GetFixtureB()->GetBody()->GetUserData();
+	GameObject* target{nullptr};
+	if (a != nullptr) {
+		auto obj = reinterpret_cast<GameObject*>(a);
+		if (obj->is_projectile) {
+			obj->drop = true;
+			target = reinterpret_cast<GameObject*>(b);
+		}
+	}
+	if (b != nullptr) {
+		auto obj = reinterpret_cast<GameObject*>(b);
+		if (obj->is_projectile) {
+			obj->drop = true;
+			target = reinterpret_cast<GameObject*>(a);
+		}
+	}
+	if (target != nullptr) {
+		// trgger teleport target (fake respawn)
+		target->respawn = true;
+		std::cout << "hit!\n";
+	}
 }
 
 void CollisionHandler::EndContact(b2Contact* contact) {
@@ -96,8 +124,8 @@ void CollisionHandler::PostSolve(b2Contact* contact, b2ContactImpulse const * im
 
 // rendering ------------------------------------------------------------------
 
-void renderCirc(sf::RenderTarget& target, sf::Vector2f const & pos) {
-	sf::CircleShape circ{10.f}; // hardcoded for the sake of simplicity
+void renderCirc(sf::RenderTarget& target, sf::Vector2f const & pos, float radius) {
+	sf::CircleShape circ{radius};
 	circ.setOrigin({circ.getRadius(), circ.getRadius()});
 	circ.setPosition(pos);
 	circ.setOutlineColor(sf::Color::White);
@@ -106,8 +134,8 @@ void renderCirc(sf::RenderTarget& target, sf::Vector2f const & pos) {
 	target.draw(circ);
 }
 
-void renderRect(sf::RenderTarget& target, sf::Vector2f const & pos) {
-	sf::RectangleShape rect{{20.f, 20.f}}; // hardcoded for the sake of simplicity
+void renderRect(sf::RenderTarget& target, sf::Vector2f const & pos, sf::Vector2f const & size) {
+	sf::RectangleShape rect{size};
 	rect.setOrigin(rect.getSize() / 2.f);
 	rect.setPosition(pos);
 	rect.setOutlineColor(sf::Color::White);
@@ -125,13 +153,50 @@ void addWall(sf::VertexArray& vertices, std::vector<b2EdgeShape>& edges, sf::Vec
 	edges.back().Set({u.x, u.y}, {v.x, v.y});
 }
 
-void populate(GameObject& object, b2World& world, sf::Vector2f const & pos) {
-	object.face_dir = {0, 1};
-	object.body = createCirc(world, pos, true, 10.f);
+void populate(std::unique_ptr<GameObject>& object, b2World& world, sf::Vector2f const & pos) {
+	object->face_dir = {0, 1};
+	object->radius = 10.f;
+	object->body = createCirc(world, pos, true, object->radius, false);
+	object->body->SetUserData(object.get());
 }
 
-void populateBox(GameObject& object, b2World& world, sf::Vector2f const & pos) {
-	object.body = createRect(world, pos, false, {20.f, 20.f});
+void populateBox(std::unique_ptr<GameObject>& object, b2World& world, sf::Vector2f const & pos) {
+	object->size = {20.f, 20.f};
+	object->body = createRect(world, pos, false, object->size, false);
+	object->body->SetUserData(object.get());
+}
+
+void populateProjectile(std::unique_ptr<GameObject>& object, b2World& world, sf::Vector2f const & pos, sf::Vector2f dir) {
+	object->radius = 2.f;
+	object->body = createCirc(world, pos, true, object->radius, true);
+	dir *= 200.f;
+	object->body->SetLinearVelocity({dir.x, dir.y});
+	object->body->SetUserData(object.get());
+	object->is_projectile = true;
+}
+
+template <typename T>
+bool pop(std::vector<T>& container, typename std::vector<T>::iterator i,
+	bool stable) {
+	auto end = std::end(container);
+	if (i == end) {
+		return false;
+	}
+	// move element to container's back
+	if (stable) {
+		// swap hand over hand
+		auto j = i;
+		while (++j != end) {
+			std::swap(*i, *j);
+			++i;
+		}
+	} else {
+		// swap immediately
+		auto last = std::prev(end);
+		std::swap(*i, *last);
+	}
+	container.pop_back();
+	return true;
 }
 
 int main() {
@@ -143,13 +208,16 @@ int main() {
 	CollisionHandler handler;
 	world.SetContactListener(&handler);
 	
-	std::vector<GameObject> objects;
-	objects.resize(3);
+	std::vector<std::unique_ptr<GameObject>> objects;
+	objects.reserve(2000);
 	
 	// create some objects
-	populate(objects[0], world, {400.f, 300.f});
-	populate(objects[1], world, {200.f, 400.f});
-	populate(objects[2], world, {700.f, 350.f});
+	objects.emplace_back(std::make_unique<GameObject>());
+	populate(objects.back(), world, {400.f, 300.f});
+	objects.emplace_back(std::make_unique<GameObject>());
+	populate(objects.back(), world, {200.f, 400.f});
+	objects.emplace_back(std::make_unique<GameObject>());
+	populate(objects.back(), world, {700.f, 350.f});
 	
 	// create wall tiles
 	sf::VertexArray wall_vertices{sf::Lines};
@@ -165,7 +233,7 @@ int main() {
 	
 	addWall(wall_vertices, wall_edges, { 50.f, 550.f}, {750.f, 550.f});
 	addWall(wall_vertices, wall_edges, {750.f,  50.f}, {750.f, 550.f});
-	auto wall = createBody(world, {0.f, 0.f}, false, &wall_edges[0]);
+	auto wall = createBody(world, {0.f, 0.f}, false, &wall_edges[0], false);
 	for (auto i = 1u; i < wall_edges.size(); ++i) {
 		wall->CreateFixture(&wall_edges[i], 0.f);
 	}
@@ -174,7 +242,7 @@ int main() {
 	for (int i = 0; i < 25; ++i) {
 		float x = std::rand() % 600 + 100;
 		float y = std::rand() % 400 + 100;
-		objects.emplace_back();
+		objects.emplace_back(std::make_unique<GameObject>());
 		populateBox(objects.back(), world, {x, y});
 	}
 	
@@ -182,8 +250,18 @@ int main() {
 	// todo: EdgeShape
 	
 	sf::RenderWindow window{sf::VideoMode{800u, 600u}, "Box2D + SFML Demo"};
+	window.setFramerateLimit(100u);
+	unsigned short frames = 0u;
+	unsigned short time = 0u;
+	sf::Clock clock;
 	
 	bool alternative_movement{false};
+	std::vector<decltype(objects.begin())> cleanup;
+	cleanup.reserve(2000);
+	
+	sf::VertexArray bullets{sf::Points};
+	bullets.resize(1000);
+	bullets.clear(); // pseudo-reserve
 	
 	while (window.isOpen()) {
 		// input stuff
@@ -196,26 +274,36 @@ int main() {
 				alternative_movement = !alternative_movement;
 				std::cout << "toggled controls\n";
 			}
+			if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+				std::cout << "peng\n";
+				objects.emplace_back(std::make_unique<GameObject>());
+				auto pos = objects[0]->body->GetPosition();
+				// adjust position to avoid collision with player
+				auto fdir = b2Vec2{objects[0]->face_dir.x, objects[0]->face_dir.y};
+				fdir *= 20.f;
+				pos += fdir;
+				populateProjectile(objects.back(), world, sf::Vector2f{pos.x, pos.y}, objects[0]->face_dir);
+			}
 		}
 		
 		// let second and third object track the player
 		b2Vec2 dir;
 		for (int i = 1u; i <= 2; ++i) {
-			dir = objects[0].body->GetPosition() - objects[i].body->GetPosition();
+			dir = objects[0]->body->GetPosition() - objects[i]->body->GetPosition();
 			dir.Normalize();
-			objects[i].face_dir = {dir.x, dir.y};
+			objects[i]->face_dir = {dir.x, dir.y};
 			dir *= 33.f;
-			objects[i].body->SetLinearVelocity(dir);
+			objects[i]->body->SetLinearVelocity(dir);
 		}
 		
 		// adjust face_dir towards mouse
 		dir.SetZero();
 		auto mpos = sf::Mouse::getPosition(window);
-		auto opos = objects[0].body->GetPosition();
+		auto opos = objects[0]->body->GetPosition();
 		dir.x = mpos.x - opos.x;
 		dir.y = mpos.y - opos.y;
 		dir.Normalize();
-		objects[0].face_dir = {dir.x, dir.y};
+		objects[0]->face_dir = {dir.x, dir.y};
 		
 		// apply direction of player according to arrow keys
 		dir.SetZero();
@@ -229,14 +317,14 @@ int main() {
 		// toggle with space bar
 		if (alternative_movement && (dir.x != 0.f || dir.y != 0.f)) {
 			// determine face_dir's rotation angle
-			auto angle = getAngle({objects[0].face_dir.x, objects[0].face_dir.y});
+			auto angle = getAngle({objects[0]->face_dir.x, objects[0]->face_dir.y});
 			b2Rot r;
 			r.Set(-angle); // note: -x due to rotation sense of direction
 			dir = b2Mul(r, dir);
 		}
 		
 		// determine whether player is moving backwards
-		auto angle = getAngle({objects[0].face_dir.x, objects[0].face_dir.y}, dir) * 180 / 3.14;
+		auto angle = getAngle({objects[0]->face_dir.x, objects[0]->face_dir.y}, dir) * 180 / 3.14;
 		if (abs(angle) > 135.f) {
 			// backwards!
 			dir *= 0.5f;
@@ -247,34 +335,78 @@ int main() {
 		
 		// move it!
 		dir *= 100.f;
-		objects[0].body->SetLinearVelocity(dir);
+		objects[0]->body->SetLinearVelocity(dir);
 		
 		// simulate world
 		world.Step(1/60.f, 8, 3);
 		
+		cleanup.clear();
+		bullets.clear();
+		for (auto it = objects.begin(); it != objects.end(); ++it) {
+			auto obj = it->get();
+			// respawn to center if requested
+			if (obj->respawn) {
+				obj->body->SetTransform({400, 300}, obj->body->GetAngle());
+				obj->respawn = false;
+			}
+			// delete if marked as drop
+			if (obj->drop) {
+				world.DestroyBody(obj->body);
+				obj->body = nullptr;
+				obj->drop = false;
+				cleanup.push_back(it);
+			}
+			if (obj->body != nullptr && obj->is_projectile) {			
+				auto pos = obj->body->GetPosition();
+				bullets.append({{pos.x, pos.y}, sf::Color::Red});
+			}
+		}
+		for (auto it: cleanup) {
+			pop(objects, it, false);
+		}
+		
 		// render scene
 		window.clear(sf::Color::Black);
 		window.draw(wall_vertices);
-		for (auto const & obj: objects) {
-			auto pos = obj.body->GetPosition();
-			// note: I just use one Fixture per GameObject's Body, hence the List contains only the first
-			// in production, the rendering systems already knows the exact rendering shape
-			if (obj.body->GetFixtureList()->GetType() == b2Shape::e_circle) {
-				renderCirc(window, {pos.x, pos.y});
-			} else {
-				renderRect(window, {pos.x, pos.y});
+		for (auto& obj: objects) {
+			if (obj->body == nullptr) {
+				continue;
 			}
+			auto pos = obj->body->GetPosition();
+			if (!obj->is_projectile) {
+				// note: I just use one Fixture per GameObject's Body, hence the List contains only the first
+				// in production, the rendering systems already knows the exact rendering shape
+				if (obj->body->GetFixtureList()->GetType() == b2Shape::e_circle) {
+					renderCirc(window, {pos.x, pos.y}, obj->radius);
+				} else {
+					renderRect(window, {pos.x, pos.y}, obj->size);
+				}
 			
-			// draw face_dir
-			if (obj.face_dir.x != 0 || obj.face_dir.y != 0) {
-				sf::VertexArray vertices{sf::Lines, 2};
-				vertices[0].position = {pos.x, pos.y};
-				vertices[0].color = sf::Color::Red;
-				vertices[1].position = vertices[0].position + sf::Vector2f{obj.face_dir} * 15.f;
-				vertices[1].color = sf::Color::Yellow;
-				window.draw(vertices);
+				// draw face_dir
+				if (obj->face_dir.x != 0 || obj->face_dir.y != 0) {
+					sf::VertexArray vertices{sf::Lines, 2};
+					vertices[0].position = {pos.x, pos.y};
+					vertices[0].color = sf::Color::Red;
+					vertices[1].position = vertices[0].position + sf::Vector2f{obj->face_dir} * 15.f;
+					vertices[1].color = sf::Color::Yellow;
+					window.draw(vertices);
+				}
 			}
 		}
+		
+		// draw bullets
+		window.draw(bullets);
+		
+		++frames;
+		auto elapsed = clock.restart();
+		time += elapsed.asMilliseconds();
+		if (time >= 1000u) {
+			auto s = "FPS: " + std::to_string(frames);
+			window.setTitle("Box2D + SFML Demo [" + s + "]");
+			time -= 1000u;
+			frames = 0u;
+		}
+		
 		window.display();
 	}
 }
