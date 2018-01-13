@@ -1,4 +1,7 @@
 #include <iostream>
+#include <memory>
+#include <iostream>
+#include <ctime>
 
 #include <Box2D/Box2D.h>
 #include <SFML/Graphics.hpp>
@@ -34,16 +37,12 @@ b2Body* createRect(b2World& world, sf::Vector2f const & pos, bool dynamic, sf::V
     return createBody(world, pos, dynamic, &shape);
 }
 
-void setMovement(b2Body* body, sf::Vector2f const & towards) {
-    auto p = body->GetPosition();
-    sf::Vector2f diff{towards.x - p.x, towards.y - p.y};
-    auto n = std::sqrt(diff.x * diff.x + diff.y * diff.y);
-    diff.x /= n;
-    diff.y /= n;
-    body->SetLinearVelocity(b2Vec2(diff.x, diff.y));
-}
+// ------
 
 class CollisionHandler: public b2ContactListener {
+    private:
+        void stopBody(b2Body* body);
+        
     public:
         void BeginContact(b2Contact* contact);
         void EndContact(b2Contact* contact);
@@ -51,29 +50,31 @@ class CollisionHandler: public b2ContactListener {
         void PostSolve(b2Contact* contact, b2ContactImpulse const * impulse);
 };
 
+void CollisionHandler::stopBody(b2Body* body) {
+    body->SetLinearVelocity(b2Vec2(0.f, 0.f));
+}
+
 void CollisionHandler::BeginContact(b2Contact* contact) {
-    auto a = contact->GetFixtureA()->GetBody();
-    auto b = contact->GetFixtureB()->GetBody();
-    std::cout << "Begin " << a << " vs. " << b << "\n";
 }
 
 void CollisionHandler::EndContact(b2Contact* contact) {
-    auto a = contact->GetFixtureA()->GetBody();
-    auto b = contact->GetFixtureB()->GetBody();
-    std::cout << "End " << a << " vs. " << b << "\n";
 }
 
 void CollisionHandler::PreSolve(b2Contact* contact, b2Manifold const * oldManifold) {
 }
 
 void CollisionHandler::PostSolve(b2Contact* contact, b2ContactImpulse const * impulse) {
+    // avoid impulses applied to anyone
+    // note: but you still can move the collision opponent (which seems okay)
+    stopBody(contact->GetFixtureA()->GetBody());
+    stopBody(contact->GetFixtureB()->GetBody());
 }
 
 
 // rendering ------------------------------------------------------------------
 
 void renderCirc(sf::RenderTarget& target, sf::Vector2f const & pos) {
-    sf::CircleShape circ{10.f};
+    sf::CircleShape circ{10.f}; // hardcoded for the sake of simplicity
     circ.setOrigin({circ.getRadius(), circ.getRadius()});
     circ.setPosition(pos);
     circ.setOutlineColor(sf::Color::White);
@@ -83,7 +84,7 @@ void renderCirc(sf::RenderTarget& target, sf::Vector2f const & pos) {
 }
 
 void renderRect(sf::RenderTarget& target, sf::Vector2f const & pos) {
-    sf::RectangleShape rect{{20.f, 8.f}};
+    sf::RectangleShape rect{{20.f, 20.f}}; // hardcoded for the sake of simplicity
     rect.setOrigin(rect.getSize() / 2.f);
     rect.setPosition(pos);
     rect.setOutlineColor(sf::Color::White);
@@ -95,44 +96,63 @@ void renderRect(sf::RenderTarget& target, sf::Vector2f const & pos) {
 // main -----------------------------------------------------------------------
 
 int main() {
+    std::srand(std::time(nullptr));
+
+    // setup world with custom collision handling
     b2Vec2 gravity{0.f, 0.f};
     b2World world{gravity};
     CollisionHandler handler;
     world.SetContactListener(&handler);
     
+    // create some objects
     auto actor = createCirc(world, {400.f, 300.f}, true, 10.f);
+    auto data = std::make_unique<int>(42); // just a demo for userdata access
+    actor->SetUserData(data.get());
     
     auto second = createCirc(world, {200.f, 400.f}, true, 10.f);
-    second->SetLinearVelocity(b2Vec2(5.f, 0.f));
+    auto third  = createCirc(world, {700.f, 350.f}, true, 10.f);
     
-    createRect(world, {400.f, 400.f}, false, {20.f, 8.f});
+    // create random blocks
+    for (int i = 0; i < 25; ++i) {
+        float x = std::rand() % 700 + 50;
+        float y = std::rand() % 500 + 50;
+        createRect(world, {x, y}, false, {20.f, 20.f});
+    }
+    
+    // create tile border
+    // todo
     
     sf::RenderWindow window{sf::VideoMode{800u, 600u}, "Box2D + SFML Demo"};
     
     while (window.isOpen()) {
+        // input stuff
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed) {
                 window.close();
             }
-            
-            if (event.type == sf::Event::KeyPressed) {
-                if (event.key.code == sf::Keyboard::Space) {
-                    // create fixed body on space key
-                    sf::Vector2f pos{sf::Mouse::getPosition(window)};
-                    createRect(world, pos, false, {20.f, 8.f});
-                }
-            }
         }
         
-        // apply director according to arrow keys
-        sf::Vector2f dir{0.f, 0.f};
+        // let second and third object track the player
+        auto dir = actor->GetPosition() - second->GetPosition();
+        dir.Normalize();
+        dir *= 33.f;
+        second->SetLinearVelocity(dir);
+        
+        dir = actor->GetPosition() - third->GetPosition();
+        dir.Normalize();
+        dir *= 33.f;
+        third->SetLinearVelocity(dir);
+        
+        // apply direction of player according to arrow keys
+        dir.SetZero();
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up))    { dir.y = -1.f; }
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down))  { dir.y =  1.f; }
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left))  { dir.x = -1.f; }
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) { dir.x =  1.f; }
-        dir *= 5.f;
-        actor->SetLinearVelocity(b2Vec2(dir.x, dir.y));
+        dir.Normalize();
+        dir *= 100.f;
+        actor->SetLinearVelocity(dir);
         
         // simulate world
         world.Step(1/60.f, 8, 3);
@@ -141,7 +161,9 @@ int main() {
         window.clear(sf::Color::Black);
         for (b2Body* it = world.GetBodyList(); it != 0; it = it->GetNext()) {
             auto pos = it->GetPosition();
-            if (it->GetType() == b2_dynamicBody) {
+            // note: I just use one Fixture per Body, hence the List contains only the first
+            // in production, the rendering systems already knows the exact rendering shape
+            if (it->GetFixtureList()->GetType() == b2Shape::e_circle) {
                 renderCirc(window, {pos.x, pos.y});
             } else {
                 renderRect(window, {pos.x, pos.y});
