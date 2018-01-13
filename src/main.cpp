@@ -13,13 +13,14 @@ struct GameObject {
 		: face_dir{}
 		, body{nullptr}
 		, is_projectile{false}
+		, is_enemy{false}
 		, drop{false}
 		, respawn{false} {
 	}
 	
 	sf::Vector2f face_dir;
 	b2Body* body;
-	bool is_projectile;
+	bool is_projectile, is_enemy;
 	float radius;
 	sf::Vector2f size;
 	
@@ -102,7 +103,7 @@ void CollisionHandler::BeginContact(b2Contact* contact) {
 			target = reinterpret_cast<GameObject*>(a);
 		}
 	}
-	if (target != nullptr) {
+	if (target != nullptr && target->is_enemy) {
 		// trgger teleport target (fake respawn)
 		target->respawn = true;
 		std::cout << "hit!\n";
@@ -211,13 +212,18 @@ int main() {
 	std::vector<std::unique_ptr<GameObject>> objects;
 	objects.reserve(2000);
 	
-	// create some objects
+	// create player
 	objects.emplace_back(std::make_unique<GameObject>());
 	populate(objects.back(), world, {400.f, 300.f});
-	objects.emplace_back(std::make_unique<GameObject>());
-	populate(objects.back(), world, {200.f, 400.f});
-	objects.emplace_back(std::make_unique<GameObject>());
-	populate(objects.back(), world, {700.f, 350.f});
+	
+	// create enemies
+	for (auto i = 0u; i < 10; ++i) {
+		objects.emplace_back(std::make_unique<GameObject>());
+		float x = std::rand() % 600 + 100;
+		float y = std::rand() % 400 + 100;
+		populate(objects.back(), world, {x, y});
+		objects.back()->is_enemy = true;
+	}
 	
 	// create wall tiles
 	sf::VertexArray wall_vertices{sf::Lines};
@@ -286,14 +292,16 @@ int main() {
 			}
 		}
 		
-		// let second and third object track the player
+		// let enemies track the player
 		b2Vec2 dir;
-		for (int i = 1u; i <= 2; ++i) {
-			dir = objects[0]->body->GetPosition() - objects[i]->body->GetPosition();
-			dir.Normalize();
-			objects[i]->face_dir = {dir.x, dir.y};
-			dir *= 33.f;
-			objects[i]->body->SetLinearVelocity(dir);
+		for (auto& obj: objects) {
+			if (obj->body != nullptr && obj->is_enemy) {
+				dir = objects[0]->body->GetPosition() - obj->body->GetPosition();
+				dir.Normalize();
+				obj->face_dir = {dir.x, dir.y};
+				dir *= 33.f;
+				obj->body->SetLinearVelocity(dir);
+			}
 		}
 		
 		// adjust face_dir towards mouse
