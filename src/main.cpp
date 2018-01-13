@@ -3,46 +3,35 @@
 #include <Box2D/Box2D.h>
 #include <SFML/Graphics.hpp>
 
-struct Object {
-//    b2Body
-};
-
-//std::vector<
-
 // physics --------------------------------------------------------------------
 
-b2Body* createBody(b2World& world, sf::Vector2f const & pos, float radius) {
+b2Body* createBody(b2World& world, sf::Vector2f const & pos, bool dynamic, b2Shape* shape) {
+    b2FixtureDef fixdef;
+    fixdef.shape = shape;
+    
     b2BodyDef bodydef;
     bodydef.position = b2Vec2(pos.x, pos.y);
-    bodydef.type = b2_dynamicBody;
-    b2Body* body = world.CreateBody(&bodydef);
+    bodydef.type = dynamic ? b2_dynamicBody : b2_staticBody;
     
-    b2CircleShape shape;
-    shape.m_radius = radius;
-    b2FixtureDef fixdef;
-    fixdef.density = 1.f;
-    fixdef.friction = 0.7f;
-    fixdef.shape = &shape;
+    auto body = world.CreateBody(&bodydef);
     body->CreateFixture(&fixdef);
     
     return body;
 }
 
-b2Body* createTile(b2World& world, sf::Vector2f const & pos, sf::Vector2f const & size) {
-    b2BodyDef bodydef;
-    bodydef.position = b2Vec2(pos.x, pos.y);
-    bodydef.type = b2_staticBody;
-    b2Body* body = world.CreateBody(&bodydef);
+b2Body* createCirc(b2World& world, sf::Vector2f const & pos, bool dynamic, float radius) {
+    b2CircleShape shape;
+    shape.m_radius = radius;
     
+    return createBody(world, pos, dynamic, &shape);
+}
+
+
+b2Body* createRect(b2World& world, sf::Vector2f const & pos, bool dynamic, sf::Vector2f const & size) {
     b2PolygonShape shape;
     shape.SetAsBox(size.x/2.f, size.y/2.f);
-    b2FixtureDef fixdef;
-    fixdef.density = 1.f;
-    fixdef.friction = 1.f;
-    fixdef.shape = &shape;
-    body->CreateFixture(&fixdef);
-    
-    return body;
+
+    return createBody(world, pos, dynamic, &shape);
 }
 
 void setMovement(b2Body* body, sf::Vector2f const & towards) {
@@ -53,6 +42,33 @@ void setMovement(b2Body* body, sf::Vector2f const & towards) {
     diff.y /= n;
     body->SetLinearVelocity(b2Vec2(diff.x, diff.y));
 }
+
+class CollisionHandler: public b2ContactListener {
+    public:
+        void BeginContact(b2Contact* contact);
+        void EndContact(b2Contact* contact);
+        void PreSolve(b2Contact* contact, b2Manifold const * oldManifold);
+        void PostSolve(b2Contact* contact, b2ContactImpulse const * impulse);
+};
+
+void CollisionHandler::BeginContact(b2Contact* contact) {
+    auto a = contact->GetFixtureA()->GetBody();
+    auto b = contact->GetFixtureB()->GetBody();
+    std::cout << "Begin " << a << " vs. " << b << "\n";
+}
+
+void CollisionHandler::EndContact(b2Contact* contact) {
+    auto a = contact->GetFixtureA()->GetBody();
+    auto b = contact->GetFixtureB()->GetBody();
+    std::cout << "End " << a << " vs. " << b << "\n";
+}
+
+void CollisionHandler::PreSolve(b2Contact* contact, b2Manifold const * oldManifold) {
+}
+
+void CollisionHandler::PostSolve(b2Contact* contact, b2ContactImpulse const * impulse) {
+}
+
 
 // rendering ------------------------------------------------------------------
 
@@ -81,10 +97,16 @@ void renderRect(sf::RenderTarget& target, sf::Vector2f const & pos) {
 int main() {
     b2Vec2 gravity{0.f, 0.f};
     b2World world{gravity};
-    auto actor = createBody(world, {400.f, 300.f}, 10.f);
-    unsigned int id = 42;
-    actor->GetFixtureList()->SetUserData(&id); // store ID to identify as actor
-
+    CollisionHandler handler;
+    world.SetContactListener(&handler);
+    
+    auto actor = createCirc(world, {400.f, 300.f}, true, 10.f);
+    
+    auto second = createCirc(world, {200.f, 400.f}, true, 10.f);
+    second->SetLinearVelocity(b2Vec2(5.f, 0.f));
+    
+    createRect(world, {400.f, 400.f}, false, {20.f, 8.f});
+    
     sf::RenderWindow window{sf::VideoMode{800u, 600u}, "Box2D + SFML Demo"};
     
     while (window.isOpen()) {
@@ -98,33 +120,22 @@ int main() {
                 if (event.key.code == sf::Keyboard::Space) {
                     // create fixed body on space key
                     sf::Vector2f pos{sf::Mouse::getPosition(window)};
-                    createTile(world, pos, {20.f, 8.f});
+                    createRect(world, pos, false, {20.f, 8.f});
                 }
             }
         }
         
         // apply director according to arrow keys
-        sf::Vector2i dir{0, 0};
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up))    { dir.y = -1; }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down))  { dir.y =  1; }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left))  { dir.x = -1; }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) { dir.x =  1; }
+        sf::Vector2f dir{0.f, 0.f};
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up))    { dir.y = -1.f; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down))  { dir.y =  1.f; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left))  { dir.x = -1.f; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) { dir.x =  1.f; }
+        dir *= 5.f;
         actor->SetLinearVelocity(b2Vec2(dir.x, dir.y));
         
         // simulate world
         world.Step(1/60.f, 8, 3);
-        
-        // query all collisions
-        for (b2Contact* c = world.GetContactList(); c; c = c->GetNext()) {
-            auto fixa = c->GetFixtureA();
-            auto fixb = c->GetFixtureB();
-            
-            // todo: find a way to detect each collision ONCE
-            // --> the collision must be solved so it isn't triggered again
-            if (fixa->GetUserData() == &id || fixb->GetUserData() == &id) {
-                std::cout << "Ooops\n";
-            }
-        }
         
         // render scene
         window.clear(sf::Color::Black);
