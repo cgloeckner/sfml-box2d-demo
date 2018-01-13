@@ -2,9 +2,20 @@
 #include <memory>
 #include <iostream>
 #include <ctime>
+#include <vector>
 
 #include <Box2D/Box2D.h>
 #include <SFML/Graphics.hpp>
+
+struct GameObject {
+    GameObject()
+        : face_dir{0, 1}
+        , body{nullptr} {
+    }
+    
+    sf::Vector2i face_dir;
+    b2Body* body;
+};
 
 // physics --------------------------------------------------------------------
 
@@ -95,6 +106,10 @@ void renderRect(sf::RenderTarget& target, sf::Vector2f const & pos) {
 
 // main -----------------------------------------------------------------------
 
+void populate(GameObject& object, b2World& world, sf::Vector2f const & pos) {
+    object.body = createCirc(world, pos, true, 10.f);
+}
+
 int main() {
     std::srand(std::time(nullptr));
 
@@ -104,13 +119,13 @@ int main() {
     CollisionHandler handler;
     world.SetContactListener(&handler);
     
-    // create some objects
-    auto actor = createCirc(world, {400.f, 300.f}, true, 10.f);
-    auto data = std::make_unique<int>(42); // just a demo for userdata access
-    actor->SetUserData(data.get());
+    std::vector<GameObject> objects;
+    objects.resize(3);
     
-    auto second = createCirc(world, {200.f, 400.f}, true, 10.f);
-    auto third  = createCirc(world, {700.f, 350.f}, true, 10.f);
+    // create some objects
+    populate(objects[0], world, {400.f, 300.f});
+    populate(objects[1], world, {200.f, 400.f});
+    populate(objects[2], world, {700.f, 350.f});
     
     // create random blocks
     for (int i = 0; i < 25; ++i) {
@@ -120,7 +135,7 @@ int main() {
     }
     
     // create tile border
-    // todo
+    // todo: EdgeShape
     
     sf::RenderWindow window{sf::VideoMode{800u, 600u}, "Box2D + SFML Demo"};
     
@@ -134,15 +149,13 @@ int main() {
         }
         
         // let second and third object track the player
-        auto dir = actor->GetPosition() - second->GetPosition();
-        dir.Normalize();
-        dir *= 33.f;
-        second->SetLinearVelocity(dir);
-        
-        dir = actor->GetPosition() - third->GetPosition();
-        dir.Normalize();
-        dir *= 33.f;
-        third->SetLinearVelocity(dir);
+        b2Vec2 dir;
+        for (int i = 1u; i <= 2; ++i) {
+            dir = objects[0].body->GetPosition() - objects[i].body->GetPosition();
+            dir.Normalize();
+            dir *= 33.f;
+            objects[i].body->SetLinearVelocity(dir);
+        }
         
         // apply direction of player according to arrow keys
         dir.SetZero();
@@ -152,7 +165,7 @@ int main() {
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) { dir.x =  1.f; }
         dir.Normalize();
         dir *= 100.f;
-        actor->SetLinearVelocity(dir);
+        objects[0].body->SetLinearVelocity(dir);
         
         // simulate world
         world.Step(1/60.f, 8, 3);
