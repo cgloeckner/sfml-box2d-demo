@@ -2,6 +2,7 @@ cmake_minimum_required (VERSION 3.0)
 project (sfml-box2d-demo)
 
 add_subdirectory(sfml)
+add_subdirectory(thor)
 
 # build Box2D
 file(GLOB_RECURSE box2d_src "box2d/Box2D/Box2D/*.cpp")

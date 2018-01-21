@@ -7,6 +7,65 @@
 
 #include <Box2D/Box2D.h>
 #include <SFML/Graphics.hpp>
+#include <Thor/Math.hpp>
+#include <Thor/Vectors.hpp>
+
+class ArcShape: public sf::CircleShape {
+	private:
+		float angle_span;
+		sf::Vector2f direction;
+		
+	public:
+		ArcShape(float radius=0.f, std::size_t point_count=30u);
+
+		void setAngle(float angle);
+		void setDirection(sf::Vector2f const & v);
+		
+		float getAngle() const;
+		sf::Vector2f getDirection() const;
+		
+		virtual sf::Vector2f getPoint(std::size_t index) const;
+};
+
+ArcShape::ArcShape(float radius, std::size_t point_count)
+	: sf::CircleShape{radius, point_count}
+	, angle_span{}
+	, direction{1.f, 0.f} {
+	setAngle(360.f);
+}
+
+void ArcShape::setAngle(float angle) {
+	angle_span = thor::toRadian(angle);
+	update();
+}
+
+void ArcShape::setDirection(sf::Vector2f const & v) {
+	direction = v;
+	update();
+}
+
+float ArcShape::getAngle() const {
+	return angle_span;
+}
+
+sf::Vector2f ArcShape::getPoint(std::size_t index) const {
+	static const float pi = 3.141592654f;
+	auto const radius = getRadius();
+
+	auto angle = index * 2.f * pi / getPointCount();
+	float x{0.f}, y{0.f};
+	
+	if (0.f <= angle && angle <= angle_span) {	
+		angle += thor::toRadian(thor::polarAngle(direction));
+		angle -= angle_span / 2.f;
+		
+		x = std::cos(angle) * radius;
+		y = std::sin(angle) * radius;
+	}
+	return {radius + x, radius + y};
+}
+
+// ----------------------------------------------------------------
 
 struct GameObject {
 	GameObject()
@@ -23,6 +82,8 @@ struct GameObject {
 	bool is_projectile, is_enemy;
 	float radius;
 	sf::Vector2f size;
+	
+	ArcShape fov;
 	
 	bool drop, respawn;
 };
@@ -159,6 +220,12 @@ void populate(std::unique_ptr<GameObject>& object, b2World& world, sf::Vector2f 
 	object->radius = 10.f;
 	object->body = createCirc(world, pos, true, object->radius, false);
 	object->body->SetUserData(object.get());
+	object->fov.setRadius(20.f);
+	object->fov.setFillColor(sf::Color::Transparent);
+	object->fov.setOutlineThickness(1.f);
+	object->fov.setOutlineColor(sf::Color::Yellow);
+	object->fov.setOrigin({20.f, 20.f});
+	object->fov.setAngle(120.f);
 }
 
 void populateBox(std::unique_ptr<GameObject>& object, b2World& world, sf::Vector2f const & pos) {
@@ -269,6 +336,7 @@ int main() {
 	bullets.resize(1000);
 	bullets.clear(); // pseudo-reserve
 	
+	
 	while (window.isOpen()) {
 		// input stuff
 		sf::Event event;
@@ -299,6 +367,7 @@ int main() {
 				dir = objects[0]->body->GetPosition() - obj->body->GetPosition();
 				dir.Normalize();
 				obj->face_dir = {dir.x, dir.y};
+				obj->fov.setDirection({dir.x, dir.y});
 				dir *= 33.f;
 				obj->body->SetLinearVelocity(dir);
 			}
@@ -312,6 +381,8 @@ int main() {
 		dir.y = mpos.y - opos.y;
 		dir.Normalize();
 		objects[0]->face_dir = {dir.x, dir.y};
+		// adjust fov arc
+		objects[0]->fov.setDirection({dir.x, dir.y});
 		
 		// apply direction of player according to arrow keys
 		dir.SetZero();
@@ -398,6 +469,9 @@ int main() {
 					vertices[1].position = vertices[0].position + sf::Vector2f{obj->face_dir} * 15.f;
 					vertices[1].color = sf::Color::Yellow;
 					window.draw(vertices);
+					
+					obj->fov.setPosition({pos.x, pos.y});
+					window.draw(obj->fov);
 				}
 			}
 		}
